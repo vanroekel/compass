@@ -54,6 +54,36 @@ class InitialState(Step):
                                       nonperiodic_y=True)
         write_netcdf(dsMesh, 'base_mesh.nc')
 
+        cullCell = dsMesh.cullCell.values
+        inds2= numpy.where(cullCell==1)[0]
+        xCellBoundary = dsMesh.xCell[inds2].values
+        yCellBoundary = dsMesh.yCell[inds2].values
+        #find which way boundary goes
+        edgesOnCell = dsMesh.edgesOnCell.values-1
+        nEdgesOnCell = dsMesh.nEdgesOnCell.values
+        if len(numpy.unique(xCellBoundary)) > len(numpy.unique(yCellBoundary)):
+            xMid = 0.5*(xCellBoundary.max() + xCellBoundary.min())
+            yBoundary = numpy.copy(yCellBoundary)
+            xBoundary = numpy.copy(xCellBoundary)
+            for i in range(len(inds2)):
+                edges = nEdgesOnCell[inds2[i]]
+                eonc = edgesOnCell[inds2[i],:edges]
+                if xCellBoundary[i] < xMid:
+                    xBoundary[i] = dsMesh.xEdge[eonc].max().values
+                else:
+                    xBoundary[i] = dsMesh.xEdge[eonc].min().values
+        else:
+            yMid = 0.5*(yCellBoundary.max() + yCellBoundary.min())
+            yBoundary = numpy.copy(yCellBoundary)
+            xBoundary = numpy.copy(xCellBoundary)
+            for i in range(len(inds2)):
+                edges = nEdgesOnCell[inds2[i]]
+                eonc = edgesOnCell[inds2[i],:edges]
+                if yCellBoundary[i] < yMid:
+                    yBoundary[i] = dsMesh.yEdge[eonc].max().values
+                else:
+                    yBoundary[i] = dsMesh.yEdge[eonc].min().values
+
         dsMesh = cull(dsMesh, logger=logger)
         dsMesh = convert(dsMesh, graphInfoFileName='culled_graph.info',
                          logger=logger)
@@ -61,6 +91,7 @@ class InitialState(Step):
 
         section = config['baroclinic_channel']
         use_distances = section.getboolean('use_distances')
+        use_temperature_gradient = section.getboolean('use_temperature_gradient')
         gradient_width_dist = section.getfloat('gradient_width_dist')
         gradient_width_frac = section.getfloat('gradient_width_frac')
         bottom_temperature = section.getfloat('bottom_temperature')
@@ -94,37 +125,58 @@ class InitialState(Step):
         else:
             perturbationWidth = (yMax - yMin) * gradient_width_frac
 
-        yOffset = perturbationWidth * numpy.sin(
-            6.0 * numpy.pi * (xCell - xMin) / (xMax - xMin))
+        if use_temperature_gradient:
+            yOffset = perturbationWidth * numpy.sin(
+                    6.0 * numpy.pi * (xCell - xMin) / (xMax - xMin))
 
-        temp_vert = (bottom_temperature +
-                     (surface_temperature - bottom_temperature) *
-                     ((ds.refZMid + bottom_depth) / bottom_depth))
+            temp_vert = (bottom_temperature +
+                         (surface_temperature - bottom_temperature) *
+                         ((ds.refZMid + bottom_depth) / bottom_depth))
 
-        frac = xarray.where(yCell < yMid - yOffset, 1., 0.)
+            frac = xarray.where(yCell < yMid - yOffset, 1., 0.)
 
-        mask = numpy.logical_and(yCell >= yMid - yOffset,
-                                 yCell < yMid - yOffset + perturbationWidth)
-        frac = xarray.where(mask,
-                            1. - (yCell - (yMid - yOffset)) / perturbationWidth,
-                            frac)
+            mask = numpy.logical_and(yCell >= yMid - yOffset,
+                                     yCell < yMid - yOffset + perturbationWidth)
+            frac = xarray.where(mask,
+                                1. - (yCell - (yMid - yOffset)) / perturbationWidth,
+                                frac)
 
-        temperature = temp_vert - temperature_difference * frac
-        temperature = temperature.transpose('nCells', 'nVertLevels')
+            temperature = temp_vert - temperature_difference * frac
+            temperature = temperature.transpose('nCells', 'nVertLevels')
 
         # Determine yOffset for 3rd crest in sin wave
-        yOffset = 0.5 * perturbationWidth * numpy.sin(
-            numpy.pi * (xCell - xPerturbMin) / (xPerturbMax - xPerturbMin))
+            yOffset = 0.5 * perturbationWidth * numpy.sin(
+                numpy.pi * (xCell - xPerturbMin) / (xPerturbMax - xPerturbMin))
 
-        mask = numpy.logical_and(
-            numpy.logical_and(yCell >= yMid - yOffset - 0.5 * perturbationWidth,
-                              yCell <= yMid - yOffset + 0.5 * perturbationWidth),
-            numpy.logical_and(xCell >= xPerturbMin,
-                              xCell <= xPerturbMax))
+            mask = numpy.logical_and(
+                numpy.logical_and(yCell >= yMid - yOffset - 0.5 * perturbationWidth,
+                                 yCell <= yMid - yOffset + 0.5 * perturbationWidth),
+                numpy.logical_and(xCell >= xPerturbMin,
+                                  xCell <= xPerturbMax))
 
-        temperature = (temperature +
-                       mask * 0.3 * (1. - ((yCell - (yMid - yOffset)) /
-                                           (0.5 * perturbationWidth))))
+            temperature = (temperature +
+                           mask * 0.3 * (1. - ((yCell - (yMid - yOffset)) /
+                                               (0.5 * perturbationWidth))))
+
+        else:
+            yOffset = perturbationWidth * numpy.sin(
+                    6.0 * numpy.pi * (xCell - xMin) / (xMax - xMin))
+
+            temp_vert = (bottom_temperature +
+                         (surface_temperature - bottom_temperature) *
+                         ((ds.refZMid + bottom_depth) / bottom_depth))
+
+            frac = xarray.where(yCell < yMid - yOffset, 1., 0.)
+
+            mask = numpy.logical_and(yCell >= yMid - yOffset,
+                                     yCell < yMid - yOffset + perturbationWidth)
+            frac = xarray.where(mask,
+                                1. - (yCell - (yMid - yOffset)) / perturbationWidth,
+                                frac)
+
+            temperature = temp_vert - temperature_difference * frac
+            temperature = temperature.transpose('nCells', 'nVertLevels')
+
 
         temperature = temperature.expand_dims(dim='Time', axis=0)
 
@@ -139,5 +191,14 @@ class InitialState(Step):
         ds['fCell'] = coriolis_parameter * xarray.ones_like(xCell)
         ds['fEdge'] = coriolis_parameter * xarray.ones_like(ds.xEdge)
         ds['fVertex'] = coriolis_parameter * xarray.ones_like(ds.xVertex)
+
+        #compute distance to boundary -- should probably do full since wall is wavy
+        dist = xarray.ones_like(temperature)
+        yCellV = yCell.values
+        xCellV = xCell.values
+        for i in range(len(dist)):
+            d_arr = numpy.sqrt((xCellV[i]-xBoundary)**2 + (yCellV[i]-yBoundary)**2)
+            dist[i,:] = d_arr.min()
+        ds['distanceToBoundary'] = dist
 
         write_netcdf(ds, 'ocean.nc')
