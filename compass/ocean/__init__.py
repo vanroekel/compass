@@ -1,4 +1,5 @@
 from compass.mpas_core import MpasCore
+from compass.ocean.tests.turbulence_closure import TurbulenceClosure
 from compass.ocean.tests.baroclinic_channel import BaroclinicChannel
 from compass.ocean.tests.global_convergence import GlobalConvergence
 from compass.ocean.tests.global_ocean import GlobalOcean
@@ -19,6 +20,7 @@ class Ocean(MpasCore):
         """
         super().__init__(name='ocean')
 
+        self.add_test_group(TurbulenceClosure(mpas_core=self))
         self.add_test_group(BaroclinicChannel(mpas_core=self))
         self.add_test_group(GlobalConvergence(mpas_core=self))
         self.add_test_group(GlobalOcean(mpas_core=self))
